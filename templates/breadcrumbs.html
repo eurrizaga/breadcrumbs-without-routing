@@ -1,0 +1,6 @@
+<h1> Breadcrumbs <sub style="font-size: medium;"><a href="" ng-click="resetBreadcrumbs()">reset</a></sub></h1>
+<ul>
+    <li ng-repeat="(k, x) in breadcrumbs track by $index">
+        <a href="" ng-click="goBack(k)" ng-class="{'noFormat': (k == (breadcrumbs.length - 1))}">{{x.viewName}}</a>
+    </li>
+</ul>

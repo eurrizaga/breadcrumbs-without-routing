@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+    <html>
+    <style>
+        .noFormat{
+            text-decoration: none;
+        }
+    </style>
+    <script src="require.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.4.8/angular.min.js"></script>
+    <body>
+        <script>
+            var app = angular.module("myApp", []); 
+            app.config(
+                function( $controllerProvider, $provide, $compileProvider ) {
+                    //Overrides the controller method to access it after initialization. Otherwise it becomes inaccesible
+                    console.log( "Config method executed." );
+                    // We store the old reference
+                    // Provider-based controller.
+                    app.controller = function( name, constructor ) {
+                        $controllerProvider.register( name, constructor );
+                        return( this );
+                    };
+                }
+            );
+            //Function outside of angular modules. Uses require to load the js file and initialize it as a controller
+            function initController(path, callback) {
+                var aux = path.split('/');
+                var controllerName = aux[aux.length - 1];
+                require([path], function(response){
+                    app.controller(controllerName, response.controller);
+                    callback(controllerName);
+                });
+            }
+            //Dynamic controller directive. Binds a controller to a tag using the controller's path only and creates a new scope for it
+            app.directive('dynamicController', function($compile, $controller, $timeout) {
+              return {
+                restrict: 'A',
+                terminal: true,
+                link: function(scope, elm, attrs) {
+                  var lastScope;
+                  scope.$watch(attrs.dynamicController, function(ctrlObject) {
+                    var newScope = scope.$new();
+                    newScope.idController = ctrlObject.id;
+                    newScope.params = scope.breadcrumbs[newScope.idController].params;
+                    scope.loadNewController(ctrlObject.path, function(name){
+                        var ctrl = $controller(name, {$scope: newScope});    
+                        $timeout(function(){
+                            if (ctrlObject.id || ctrlObject.id === 0){
+                                scope.breadcrumbs[ctrlObject.id].isLoaded = true;
+                            }
+                            elm.contents().data('$ngControllerController', ctrl);
+                            $compile(elm.contents())(newScope);
+                        });
+                    });
+                  });
+                }
+              };
+            });
+            app.directive('breadcrumbsView', function(){
+                return {
+                    restrict: 'E',
+                    templateUrl: 'templates/breadcrumbs.html'
+                }
+            })
+
+            //Main app controller. Defines modules and breadcrumbs management
+            app.controller("appCtrl", function($scope, $location, $controller, $timeout) {
+                var requestModule = false;
+                //Escucha cambios de location para actualizar la vista si está inicializando
+                $scope.$on('$locationChangeSuccess', function(){
+                    console.log('location changed');
+                    if (!requestModule){
+                        init();
+                    }
+                    requestModule = false;
+                });
+                //Información de los módulos. Podría cargarse desde un JSON si hace falta
+                $scope.modules = {
+                    "root": {
+                        viewName: "Root", 
+                        templateUrl: 'templates/root.html',
+                        path: 'root',
+                        controller: 'controllers/root',
+                        
+                    },
+                    "page1": {
+                        viewName: "Section 1", 
+                        templateUrl: 'templates/page1.html',
+                        path: 'page1/:value',
+                        controller: 'controllers/ctrl1'
+                    },
+                    "page2": {
+                        viewName: "Section 2", 
+                        templateUrl: 'templates/page2.html',
+                        path: 'page2/:value',
+                        controller: 'controllers/ctrl2'
+                    }
+                };
+                $scope.currentModule = $scope.modules[0];
+                
+                //Writes the location path, simulating routing-based navigation
+                var setPath = function(){
+                    var path = "";
+                    for (var i in $scope.breadcrumbs){
+                        var breadPath = $scope.breadcrumbs[i].path.split('/');
+                        path += "/!/" + breadPath[0];
+                        if ($scope.breadcrumbs[i].params){
+                            for (var k = 1; k < breadPath.length; k++){
+                                if ($scope.breadcrumbs[i].params[breadPath[k].substring(1)])
+                                    path += '/' + $scope.breadcrumbs[i].params[breadPath[k].substring(1)];
+                            }
+                        }
+                    }
+                    $location.path(path);
+                }
+
+                //Go back to a previous module
+                $scope.goBack = function(index){
+                    requestModule = true;
+                    $scope.breadcrumbs.splice(index + 1);
+                    setPath();
+                }
+
+                //Move to a the selected module
+                $scope.selectModule = function(module, params){
+                    requestModule = true;
+                    if ($scope.modules[module]){
+                        var newModule = angular.copy($scope.modules[module]);
+                        newModule.id = $scope.breadcrumbs.length;
+                        newModule.params = {};
+                        if (params){
+                            for (var i in params){
+                                newModule.params[i] = params[i];
+                            }
+                        }
+                        $scope.breadcrumbs.push(newModule);
+                        setPath();
+                    }
+                }
+                //Reset breadcrumbs
+                $scope.resetBreadcrumbs = function(){
+                    $scope.breadcrumbs = [];
+                    $scope.selectModule('root');
+                }
+                
+                //Evaluates the url on reload in order to restore the system to its previous state
+                var init = function(){
+                    $scope.breadcrumbs = [];
+                    $scope.urlPath = $location.path();
+                    if (($scope.urlPath != "") && ($scope.urlPath != '/')){
+                        var path = $scope.urlPath.split("/!/");
+                        for (var i = 1; i < path.length; i++){
+                            var newPath = path[i].split('/');
+                            var paramObj = {};
+                            if ($scope.modules[newPath[0]]){
+                                var selModule = $scope.modules[newPath[0]];
+                                var routeParam = selModule.path.split('/');
+                                for (var j = 1; j < newPath.length; j++){
+                                    if (newPath[j])
+                                        paramObj[routeParam[j].substring(1)] = newPath[j];
+                                }
+                                selModule.params = paramObj;
+                                $scope.breadcrumbs.push(angular.copy(selModule));
+                            }
+                            else{
+                                $scope.resetBreadcrumbs();
+                                break;
+                            }
+                        }
+                    }
+                    else{
+                        $scope.selectModule('root');
+                    }
+                }
+                //This function acts as an intermediary between the synamic controller loading and the require js loader
+                $scope.loadNewController = function(path, callback){
+                    initController(path, function(name) {
+                        var controllerName = name;
+                        callback(controllerName);  
+                    });    
+                }
+            });
+        </script>
+        <div ng-app="myApp" ng-controller="appCtrl as main">
+            <h1> Available Modules </h1>
+            <ul>
+                <li ng-repeat="(k, x) in modules">
+                    <a href="" ng-click="selectModule(k)">{{x.viewName}}</a>
+                </li>
+            </ul>
+            ------------
+            <breadcrumbs-view></breadcrumbs-view>
+            ------------
+            <div ng-repeat="(k,b) in breadcrumbs">
+                <div ng-if="((k == (breadcrumbs.length - 1)) || b.isLoaded)" dynamic-controller="{'path': b.controller, 'id': k}">
+                    <div ng-include="b.templateUrl" ng-if="k == (breadcrumbs.length - 1)"></div>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
